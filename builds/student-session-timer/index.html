@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Study Session Timer</title>
+<style>
+  :root {
+    --ink: #10233f;
+    --muted: #4a5a6a;
+    --bg: #ffffff;
+    --panel: #eef3f7;
+    --focus-accent: #1a5e9a;
+    --break-accent: #2e6b30;
+    --error: #a4161a;
+    --focus-ring: #b35c00;
+    --border: #6b7c8d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.5;
+  }
+  main { max-width: 34rem; margin: 0 auto; padding: 1rem; }
+  h1 { font-size: 1.5rem; margin: 0 0 0.25rem; }
+  .intro { margin: 0 0 1rem; color: var(--muted); }
+
+  .clock {
+    padding: 1rem;
+    background: var(--panel);
+    border-left: 6px solid var(--focus-accent);
+    border-radius: 6px;
+    text-align: center;
+  }
+  .clock.is-break { border-left-color: var(--break-accent); }
+  .period { margin: 0; font-size: 1.15rem; font-weight: 700; }
+  .time {
+    margin: 0.1rem 0 0.5rem;
+    font-size: 3.25rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+  }
+  .buttons { display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+  button {
+    min-height: 44px;
+    min-width: 7rem;
+    padding: 0.5rem 1rem;
+    font: inherit;
+    font-weight: 600;
+    border-radius: 6px;
+    border: 2px solid var(--focus-accent);
+    cursor: pointer;
+  }
+  .primary { background: var(--focus-accent); color: #fff; }
+  .secondary { background: #fff; color: var(--focus-accent); }
+  .message { margin: 0.75rem 0 0; font-weight: 600; }
+  .message:empty { display: none; }
+
+  fieldset { border: 0; margin: 1rem 0 0; padding: 0; min-width: 0; }
+  legend { font-weight: 700; font-size: 1.1rem; padding: 0; margin-bottom: 0.5rem; }
+  .row { display: flex; flex-wrap: wrap; gap: 0 1rem; }
+  .field { flex: 1 1 10rem; margin-bottom: 0.75rem; }
+  label { display: block; font-weight: 600; margin-bottom: 0.25rem; }
+  .hint { display: block; font-weight: 400; font-size: 0.9rem; color: var(--muted); }
+  input[type="text"] {
+    width: 100%;
+    min-height: 44px;
+    padding: 0.5rem 0.65rem;
+    font: inherit;
+    color: var(--ink);
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  input[type="text"]:disabled { background: #f1f3f5; color: var(--muted); }
+  input[aria-invalid="true"] { border-color: var(--error); }
+  .error { color: var(--error); font-size: 0.95rem; margin: 0.25rem 0 0; }
+  .error:empty { display: none; }
+  .check { display: flex; align-items: center; gap: 0.5rem; min-height: 44px; }
+  .check input { width: 24px; height: 24px; margin: 0; }
+  .check label { margin: 0; }
+  .locked-note { font-size: 0.9rem; color: var(--muted); margin: 0 0 0.5rem; }
+  .locked-note[hidden] { display: none; }
+
+  :focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 2px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <h1>Study Session Timer</h1>
+  <p class="intro">Study for a set time, then take a break. You choose the lengths. Nothing you enter leaves this page.</p>
+
+  <section class="clock" id="clock" aria-labelledby="period">
+    <p class="period" id="period">Focus</p>
+    <p class="time" id="time" role="timer" aria-live="off">25:00</p>
+    <div class="buttons">
+      <button type="button" class="primary" id="main-btn">Start</button>
+      <button type="button" class="secondary" id="reset-btn">Reset</button>
+    </div>
+    <p class="message" id="message" aria-live="polite" aria-atomic="true"></p>
+  </section>
+
+  <fieldset id="settings">
+    <legend>Settings</legend>
+    <p class="locked-note" id="locked-note" hidden>Pause and select Reset to change the lengths.</p>
+    <div class="row">
+      <div class="field">
+        <label for="focus-min">Focus length <span class="hint">in minutes, 1 to 120</span></label>
+        <input type="text" id="focus-min" inputmode="numeric" autocomplete="off" value="25" aria-describedby="focus-min-error">
+        <p class="error" id="focus-min-error"></p>
+      </div>
+      <div class="field">
+        <label for="break-min">Break length <span class="hint">in minutes, 1 to 60</span></label>
+        <input type="text" id="break-min" inputmode="numeric" autocomplete="off" value="5" aria-describedby="break-min-error">
+        <p class="error" id="break-min-error"></p>
+      </div>
+    </div>
+    <div class="check">
+      <input type="checkbox" id="sound" checked>
+      <label for="sound">Play a sound when time is up</label>
+    </div>
+  </fieldset>
+</main>
+
+<script>
+/**
+ * Study Session Timer.
+ * Single-file embed (ADR-002): no network requests, no storage (R13).
+ * Requirements R1 to R13 are in docs/SPEC.md.
+ */
+
+/* ---------- Settings you can edit ---------- */
+
+/** Allowed lengths in whole minutes, with defaults (R1). */
+const LIMITS = {
+  focus: { min: 1, max: 120, label: 'Focus length' },
+  break: { min: 1, max: 60, label: 'Break length' }
+};
+
+/** Messages shown and announced when a period ends (R7, R8). */
+const END_MESSAGES = {
+  focus: "Focus time is over. Start your break when you're ready.",
+  break: "Break is over. Start focus when you're ready."
+};
+
+/** How often the display updates while running, in milliseconds. Time itself comes from the clock (R11). */
+const UPDATE_EVERY_MS = 250;
+
+/* ---------- Page elements ---------- */
+
+const el = {
+  clock: document.getElementById('clock'),
+  period: document.getElementById('period'),
+  time: document.getElementById('time'),
+  mainBtn: document.getElementById('main-btn'),
+  resetBtn: document.getElementById('reset-btn'),
+  message: document.getElementById('message'),
+  lockedNote: document.getElementById('locked-note'),
+  sound: document.getElementById('sound'),
+  inputs: {
+    focus: document.getElementById('focus-min'),
+    break: document.getElementById('break-min')
+  },
+  errors: {
+    focus: document.getElementById('focus-min-error'),
+    break: document.getElementById('break-min-error')
+  }
+};
+
+/* ---------- Timer state ---------- */
+
+/**
+ * The whole timer state.
+ * phase: 'focus' or 'break'.
+ * status: 'ready' (not started), 'running', 'paused', or 'ended' (reached 0:00).
+ * endAt: clock time (ms) the running period ends; only meaningful while running.
+ * remainingMs: time left; kept up to date while paused or ready.
+ */
+const state = {
+  phase: 'focus',
+  status: 'ready',
+  endAt: 0,
+  remainingMs: 25 * 60 * 1000,
+  intervalId: null
+};
+
+/* ---------- Validation (R2) ---------- */
+
+/**
+ * Checks one length field and shows or clears its error message.
+ * @param {'focus'|'break'} which - The field to check.
+ * @returns {number|null} The length in minutes, or null if the value is not allowed.
+ */
+function readMinutes(which) {
+  const input = el.inputs[which];
+  const limit = LIMITS[which];
+  const raw = input.value.trim();
+  let error = '';
+
+  if (raw === '') {
+    error = `Enter a ${limit.label.toLowerCase()} in minutes.`;
+  } else if (!/^\d+$/.test(raw)) {
+    error = `${limit.label} must be a whole number of minutes.`;
+  } else {
+    const value = Number(raw);
+    if (value < limit.min || value > limit.max) {
+      error = `${limit.label} must be between ${limit.min} and ${limit.max} minutes.`;
+    }
+  }
+
+  el.errors[which].textContent = error;
+  if (error) {
+    input.setAttribute('aria-invalid', 'true');
+    return null;
+  }
+  input.removeAttribute('aria-invalid');
+  return Number(raw);
+}
+
+/**
+ * Checks both length fields. Moves keyboard focus to the first bad field.
+ * @returns {{focus: number, break: number}|null} Both lengths, or null if either is not allowed.
+ */
+function readSettings() {
+  const focus = readMinutes('focus');
+  const brk = readMinutes('break');
+  if (focus === null) { el.inputs.focus.focus(); return null; }
+  if (brk === null) { el.inputs.break.focus(); return null; }
+  return { focus, break: brk };
+}
+
+/**
+ * Clears both field errors.
+ * @returns {void}
+ */
+function clearErrors() {
+  for (const which of ['focus', 'break']) {
+    el.errors[which].textContent = '';
+    el.inputs[which].removeAttribute('aria-invalid');
+  }
+}
+
+/* ---------- Timer engine (R3, R5, R6, R10, R11) ---------- */
+
+/**
+ * Works out how much time is left, using the clock rather than counting ticks (R11).
+ * @returns {number} Milliseconds left, never below zero.
+ */
+function getRemainingMs() {
+  if (state.status === 'running') {
+    return Math.max(0, state.endAt - Date.now());
+  }
+  return state.remainingMs;
+}
+
+/**
+ * Starts a period from its full length.
+ * @param {'focus'|'break'} phase - Which period to start.
+ * @returns {void}
+ */
+function startPeriod(phase) {
+  const settings = readSettings();
+  if (!settings) return; // R2: do not start with a bad value.
+
+  unlockAudio(); // This runs inside a click, which browsers require before sound can play (R9).
+  state.phase = phase;
+  state.remainingMs = settings[phase] * 60 * 1000;
+  el.message.textContent = '';
+  run();
+}
+
+/**
+ * Begins (or continues) counting down from state.remainingMs.
+ * @returns {void}
+ */
+function run() {
+  state.status = 'running';
+  state.endAt = Date.now() + state.remainingMs;
+  clearInterval(state.intervalId);
+  state.intervalId = setInterval(tick, UPDATE_EVERY_MS);
+  render();
+}
+
+/**
+ * Pauses the countdown and remembers the time left (R5).
+ * @returns {void}
+ */
+function pause() {
+  state.remainingMs = getRemainingMs();
+  state.status = 'paused';
+  clearInterval(state.intervalId);
+  render();
+}
+
+/**
+ * Stops everything and returns to a ready focus period at the current focus length (R6).
+ * @returns {void}
+ */
+function reset() {
+  clearInterval(state.intervalId);
+  state.phase = 'focus';
+  state.status = 'ready';
+  el.message.textContent = '';
+  clearErrors();
+  state.remainingMs = currentFocusMs();
+  render();
+}
+
+/**
+ * The focus length from the field, or the default if the field is not valid yet.
+ * Does not show errors; errors appear when the student tries to start.
+ * @returns {number} Focus length in milliseconds.
+ */
+function currentFocusMs() {
+  const raw = el.inputs.focus.value.trim();
+  const value = Number(raw);
+  const ok = /^\d+$/.test(raw) && value >= LIMITS.focus.min && value <= LIMITS.focus.max;
+  return (ok ? value : 25) * 60 * 1000;
+}
+
+/**
+ * Called on a short interval while running. Updates the display and ends the period at 0:00.
+ * @returns {void}
+ */
+function tick() {
+  if (state.status !== 'running') return;
+  if (getRemainingMs() <= 0) {
+    endPeriod();
+  } else {
+    renderTime();
+  }
+}
+
+/**
+ * Stops at 0:00, shows and announces the message, and plays the chime (R7, R8, R9, R10).
+ * The next period does not start until the student selects it (R10).
+ * @returns {void}
+ */
+function endPeriod() {
+  clearInterval(state.intervalId);
+  state.remainingMs = 0;
+  state.status = 'ended';
+  el.message.textContent = END_MESSAGES[state.phase];
+  if (el.sound.checked) playChime();
+  render();
+}
+
+/* ---------- Display (R3, R12) ---------- */
+
+/**
+ * Formats milliseconds as M:SS, rounding up so a 1-minute period starts at 1:00.
+ * @param {number} ms - Milliseconds left.
+ * @returns {string} For example "24:59".
+ */
+function formatTime(ms) {
+  const totalSeconds = Math.ceil(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/**
+ * Updates only the time text. The time is not a live region, so this is never read aloud each second (R12).
+ * @returns {void}
+ */
+function renderTime() {
+  el.time.textContent = formatTime(getRemainingMs());
+}
+
+/**
+ * Updates everything on screen to match the state.
+ * @returns {void}
+ */
+function render() {
+  const isBreak = state.phase === 'break';
+  const name = isBreak ? 'Break' : 'Focus';
+  el.period.textContent = state.status === 'paused' ? `${name} (paused)` : name;
+  el.clock.classList.toggle('is-break', isBreak);
+  renderTime();
+
+  const labels = {
+    ready: 'Start',
+    running: 'Pause',
+    paused: 'Resume',
+    ended: isBreak ? 'Start focus' : 'Start break'
+  };
+  el.mainBtn.textContent = labels[state.status];
+
+  // R4: lengths cannot change while a period is running or paused.
+  const locked = state.status === 'running' || state.status === 'paused';
+  el.inputs.focus.disabled = locked;
+  el.inputs.break.disabled = locked;
+  el.lockedNote.hidden = !locked;
+}
+
+/* ---------- Chime (R9) ---------- */
+
+/** The shared audio context, created on the first Start click. */
+let audioCtx = null;
+
+/**
+ * Creates or wakes the audio context. Must be called from a click so the browser allows sound later.
+ * @returns {void}
+ */
+function unlockAudio() {
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return; // Very old browser: no sound, but the visible message still works.
+  try {
+    if (!audioCtx) audioCtx = new AudioCtor();
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+  } catch (e) {
+    audioCtx = null;
+  }
+}
+
+/**
+ * Plays a short two-note chime generated in the browser. No sound file is loaded (ADR-002).
+ * @returns {void}
+ */
+function playChime() {
+  if (!audioCtx) return;
+  try {
+    if (audioCtx.state === 'suspended') audioCtx.resume();
+    const start = audioCtx.currentTime + 0.05;
+    [[880, 0], [660, 0.35]].forEach(([freq, offset]) => {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, start + offset);
+      gain.gain.exponentialRampToValueAtTime(0.3, start + offset + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + 0.6);
+      osc.connect(gain).connect(audioCtx.destination);
+      osc.start(start + offset);
+      osc.stop(start + offset + 0.65);
+    });
+  } catch (e) {
+    // Sound is a bonus signal; the on-screen message already covers the ending.
+  }
+}
+
+/* ---------- Wiring ---------- */
+
+/**
+ * Handles the main button, whose job depends on the current status.
+ * @returns {void}
+ */
+function onMainButton() {
+  switch (state.status) {
+    case 'ready': startPeriod('focus'); break;
+    case 'running': pause(); break;
+    case 'paused': unlockAudio(); run(); break;
+    case 'ended': startPeriod(state.phase === 'focus' ? 'break' : 'focus'); break;
+  }
+}
+
+el.mainBtn.addEventListener('click', onMainButton);
+el.resetBtn.addEventListener('click', reset);
+
+// While ready, show the new focus length as the student types it.
+el.inputs.focus.addEventListener('input', () => {
+  if (state.status === 'ready') {
+    state.remainingMs = currentFocusMs();
+    renderTime();
+  }
+});
+
+// R11: when the student comes back to the tab, catch up right away.
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) tick();
+});
+
+render();
+</script>
+</body>
+</html>
